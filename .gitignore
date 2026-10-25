@@ -1,0 +1,6 @@
+build/
+logs/
+reports/
+__pycache__/
+*.vvp
+*.vcd
