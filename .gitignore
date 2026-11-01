@@ -4,3 +4,16 @@ reports/
 __pycache__/
 *.vvp
 *.vcd
+
+# ---- TangDynasty 构建产物（可由源码重新生成，不入库）----
+westlake_guide_top_640_Runs/
+log/
+
+# ---- 编辑器 / 系统临时文件 ----
+.vscode/
+.idea/
+*.bak
+*~
+Thumbs.db
+desktop.ini
+.DS_Store

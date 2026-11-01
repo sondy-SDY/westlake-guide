@@ -2,7 +2,7 @@
 // VCO = (50/2) x 5 x (8/2) = 500 MHz；C0 = 2x500/8 = 125 MHz；C1 = 2x500/40 = 25 MHz。
 // 与 hdmi_pll.v（1024x600 用的 255/51 MHz）互不影响：那份文件不能改，旧单图工程还在用。
 `timescale 1 ns / 100 fs
-module hdmi_pll_640(refclk,reset,extlock,clk0_out,clk1_out);
+module hdmi_pll_640 #(parameter NATIVE_PANEL=0)(refclk,reset,extlock,clk0_out,clk1_out);
   input refclk;input reset;output extlock;output clk0_out;output clk1_out;
   wire clk0_buf;
   EG_LOGIC_BUFG bufg_feedback(.i(clk0_buf),.o(clk0_out));
@@ -11,7 +11,7 @@ module hdmi_pll_640(refclk,reset,extlock,clk0_out,clk1_out);
     .FEEDBK_MODE("NORMAL"),.FEEDBK_PATH("CLKC0_EXT"),
     .STDBY_ENABLE("DISABLE"),.PLLRST_ENA("ENABLE"),.SYNC_ENABLE("DISABLE"),
     .GMC_GAIN(2),.ICP_CURRENT(9),.KVCO(2),.LPF_CAPACITOR(1),.LPF_RESISTOR(8),
-    .REFCLK_DIV(2),.FBCLK_DIV(5),
+    .REFCLK_DIV(NATIVE_PANEL?10:2),.FBCLK_DIV(NATIVE_PANEL?51:5),
     .CLKC0_ENABLE("ENABLE"),.CLKC0_DIV(8),.CLKC0_CPHASE(7),.CLKC0_FPHASE(0),
     .CLKC1_ENABLE("ENABLE"),.CLKC1_DIV(40),.CLKC1_CPHASE(39),.CLKC1_FPHASE(0)
   ) pll_inst(

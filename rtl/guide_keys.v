@@ -22,19 +22,22 @@ endmodule
 // A fade sequencer sits in front of the switch: fade out to paper -> swap the page
 // (and restart the narration) -> fade in. Only one page is read from SDRAM at a
 // time, so the transition costs no extra bandwidth.
-module guide_control #(parameter CLOCK_HZ=51000000,parameter FADE_TICK=2)(
+module guide_control #(parameter CLOCK_HZ=51000000,parameter FADE_TICK=2,parameter ROUTE_SELECT=0)(
  input clk,input rst,input enabled,input next_tap,input home_hold,input auto_tap,
  input pause_tap,input replay_hold,input [6:0] period_cfg,input audio_done,input audio_playing,
  input frame_boundary,output reg [3:0] page,output reg auto_mode,output reg paused,
  output reg play_toggle,output reg [6:0] seconds,output [6:0] period,output reg [7:0] fade,
- input zoom_hold,output reg zoom);
+ input zoom_hold,output reg zoom,input suspended,input route_reverse,output idle);
  reg [25:0] ticks;reg [3:0] wanted;reg was_enabled;reg replay;
  reg [1:0] fphase;reg [1:0] ftick;
  assign period=period_cfg;   // 轮播周期由开发者模式设置（10/20/30/60 s）
+ assign idle=(fphase==0 && wanted==page && !replay);
+ wire [3:0] next_page=(page==0)?4'd1:
+  ((ROUTE_SELECT && route_reverse)?((page==1)?4'd5:page-1'b1):((page==5)?4'd1:page+1'b1));
  always @(posedge clk or posedge rst) begin
   if(rst) begin page<=0;wanted<=0;auto_mode<=0;paused<=0;play_toggle<=0;
    seconds<=0;ticks<=0;was_enabled<=0;replay<=0;fphase<=0;ftick<=0;fade<=8'd255;zoom<=0;end
-  else begin
+  else if(!suspended) begin
    was_enabled<=enabled;
    if(enabled && !was_enabled) replay<=1;
    if(enabled && !paused) begin
@@ -42,7 +45,7 @@ module guide_control #(parameter CLOCK_HZ=51000000,parameter FADE_TICK=2)(
     else ticks<=ticks+1'b1;
    end
    if(enabled) begin
-    if(next_tap) wanted<=page==5?3'd1:page+1'b1;
+    if(next_tap) wanted<=next_page;
     if(home_hold) begin wanted<=0;auto_mode<=0;end
     // 只有"打开"时才清零停留计时，关闭时保留，免得连按 K3 把计时器反复归零。
     if(auto_tap) begin
@@ -55,8 +58,9 @@ module guide_control #(parameter CLOCK_HZ=51000000,parameter FADE_TICK=2)(
     if(replay_hold) replay<=1;
     // KEY3 长按：整屏放大/还原（短按仍是自动导览，赛题要求②）
     if(zoom_hold) zoom<=~zoom;
-    if(auto_mode && !paused && page!=0 && seconds>=period && (audio_done || !audio_playing))
-     wanted<=page==5?3'd1:page+1'b1;
+    // 缓冲和欠载也会让 playing=0，只有明确的 EOF/错误才允许自动换页。
+    if(auto_mode && !paused && page!=0 && seconds>=period && audio_done)
+     wanted<=next_page;
    end
    // Fade sequencer: 8 steps of 32, FADE_TICK frames each, out then in.
    if(frame_boundary) begin

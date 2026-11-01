@@ -1,5 +1,5 @@
 // Four-word writes retain the SDRAM IP's tested alignment and drain contract.
-// After boot all seven pages are immutable. One page is a 640x480 card packed two
+// After boot all thirteen pages are immutable. One page is a 640x480 card packed two
 // RGB565 pixels per word (153,600 words); a line read is 320 words (7.7 us at
 // 41.67 MHz), and only 480 of the 635 rows are ever read.
 module guide_memory(input clk,input rst,input mem_init,input mem_refresh,
@@ -15,7 +15,7 @@ module guide_memory(input clk,input rst,input mem_init,input mem_refresh,
  reg [20:0] base,read_base;reg [4:0] drain;reg [9:0] sent,returned;
  reg [1:0] req_sync;reg seen;
  // 页基址 = 页号 * 153600 = (页号*75) << 11。常数乘法，以后加减页都不会漏。
- // 3 位页号够用（0..7），7 页 = 1,075,200 字 < 2M。
+ // 4 位页号覆盖 0..12，13 页 = 1,996,800 字 < 2M。
  wire [20:0] page_base=({4'd0,line_page}*10'd75)<<11;
  // 装载写和显示读按"组"分时：写只占 COLLECT 的空隙（4 字一组），行读 320 字 7.7 us 仍在 16 us 行预算内。
  // 原来要求 !display_enable：开机卡一显示，后面的卡就写不进去，进度条就卡住了。

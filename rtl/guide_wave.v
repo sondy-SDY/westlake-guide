@@ -1,13 +1,30 @@
 // 音频频谱柱（8 段滤波器组版）：8 个一阶低通组成对数频段（约 30 Hz..3.8 kHz + 高频残余），
-// 相邻低通之差 = 该频段能量（有符号运算）；取绝对值平滑后按 6 dB 一档映射成柱高 0..32 px。
+// 相邻低通之差 = 该频段能量（有符号运算）；对数幅度细分为 0..48 级。
 // 屏幕 64 根柱（10 px 间距），第 j 段和第 j+1 段之间按 8 根柱线性插值，
-// 柱高在帧边界锁存一次，帧内不变。输出给 guide_video_640 画"底部在 y=360 上方"的柱状图。
+// 帧边界做快起慢落的包络，画面端再放大为像素高度；restart 清除上一条音轨的历史。
 module guide_wave(
  input pclk,input prst,
  input sample_valid,input [23:0] sample,
- input frame_boundary,
+ input frame_boundary,input restart,
  input [5:0] bx,                     // 0..63
- output reg [5:0] hgt);              // 0..32 px
+ output reg [5:0] hgt);              // 0..48，显示端可放大到 96 px
+ // 连续约 21 ms 的数字静音后清除滤波器的定点残差，负采样也能真正回到零。
+ reg [9:0] zeros;
+ reg sample_seen;
+ wire quiet=&zeros;
+ wire clear_filters=restart||(quiet&&(!sample_valid||sample==24'd0));
+ always @(posedge pclk or posedge prst) begin
+  if(prst) begin zeros<=0;sample_seen<=0;end
+  else if(restart) begin zeros<=0;sample_seen<=0;end
+  else begin
+   if(frame_boundary) sample_seen<=0;
+   if(sample_valid) begin
+    sample_seen<=1;
+    if(sample!=24'd0) zeros<=0;
+    else if(!quiet) zeros<=zeros+1'b1;
+   end
+  end
+ end
  wire signed [16:0] xs={sample[23],sample[23:8]};
  // 8 个一阶低通：k=1 最快（约 3.8 kHz）.. k=8 最慢（约 30 Hz）
  reg signed [15:0] lp1,lp2,lp3,lp4,lp5,lp6,lp7,lp8;
@@ -15,6 +32,7 @@ module guide_wave(
  wire signed [16:0] d5=xs-lp5, d6=xs-lp6, d7=xs-lp7, d8=xs-lp8;
  always @(posedge pclk or posedge prst) begin
   if(prst) begin lp1<=0;lp2<=0;lp3<=0;lp4<=0;lp5<=0;lp6<=0;lp7<=0;lp8<=0;end
+  else if(clear_filters) begin lp1<=0;lp2<=0;lp3<=0;lp4<=0;lp5<=0;lp6<=0;lp7<=0;lp8<=0;end
   else if(sample_valid) begin
    // 右移后的差值必须符号扩展再相加，否则负差值会被当成大的正数（滤波发散）
    lp1<=lp1+{{0{d1[16]}},d1[16:1]};
@@ -55,6 +73,7 @@ module guide_wave(
  wire signed [17:0] e8=$signed({1'b0,a8})- $signed({1'b0,s8});
  always @(posedge pclk or posedge prst) begin
   if(prst) begin s1<=0;s2<=0;s3<=0;s4<=0;s5<=0;s6<=0;s7<=0;s8<=0;end
+  else if(clear_filters) begin s1<=0;s2<=0;s3<=0;s4<=0;s5<=0;s6<=0;s7<=0;s8<=0;end
   else if(sample_valid) begin
    s1<=s1+{{5{e1[17]}},e1[17:6]}; s2<=s2+{{5{e2[17]}},e2[17:6]};
    s3<=s3+{{5{e3[17]}},e3[17:6]}; s4<=s4+{{5{e4[17]}},e4[17:6]};
@@ -62,22 +81,31 @@ module guide_wave(
    s7<=s7+{{5{e7[17]}},e7[17:6]}; s8<=s8+{{5{e8[17]}},e8[17:6]};
   end
  end
- // 幅度 -> 柱高：取最高有效位，6 dB 一档，每档 4 px（最大 32）
- function [5:0] hgt_of;input [16:0] e;reg [3:0] ex;begin
+ // 最高位 + 两位尾数：每倍幅度分成四级，避免只按整档突然跳高。
+ function [5:0] hgt_of;input [16:0] e;reg [3:0] ex;reg [16:0] mant;begin
   if(e[15]) ex=4'd15; else if(e[14]) ex=4'd14; else if(e[13]) ex=4'd13;
   else if(e[12]) ex=4'd12; else if(e[11]) ex=4'd11; else if(e[10]) ex=4'd10; else if(e[9]) ex=4'd9;
   else if(e[8]) ex=4'd8; else if(e[7]) ex=4'd7; else if(e[6]) ex=4'd6; else if(e[5]) ex=4'd5;
   else if(e[4]) ex=4'd4; else if(e[3]) ex=4'd3; else if(e[2]) ex=4'd2; else if(e[1]) ex=4'd1;
   else ex=4'd0;
-  hgt_of=(ex>=4'd4)?({2'd0,ex-4'd4}<<2):6'd0;   // 4 px 一档，最大 44（ex=15）
+  mant=(ex>=4'd4)?(e>>(ex-4'd2)):17'd0;
+  hgt_of=e[16]?6'd48:((ex>=4'd4)?({2'd0,ex-4'd4}<<2)+{4'd0,mant[1:0]}:6'd0);
  end endfunction
+ function [5:0] envelope;input [5:0] old_h,target;begin
+  if(target>old_h) envelope=(target-old_h>6'd8)?old_h+6'd8:target;
+  else envelope=(old_h-target>6'd2)?old_h-6'd2:target;
+ end endfunction
+ wire have_audio=(sample_seen||sample_valid)&&!quiet;
  // 帧边界锁存 8 个频段高度
  reg [5:0] h1,h2,h3,h4,h5,h6,h7,h8;
  always @(posedge pclk or posedge prst) begin
   if(prst) begin h1<=0;h2<=0;h3<=0;h4<=0;h5<=0;h6<=0;h7<=0;h8<=0;end
+  else if(restart) begin h1<=0;h2<=0;h3<=0;h4<=0;h5<=0;h6<=0;h7<=0;h8<=0;end
   else if(frame_boundary) begin
-   h1<=hgt_of(s1); h2<=hgt_of(s2); h3<=hgt_of(s3); h4<=hgt_of(s4);
-   h5<=hgt_of(s5); h6<=hgt_of(s6); h7<=hgt_of(s7); h8<=hgt_of(s8);
+   h1<=envelope(h1,have_audio?hgt_of(s1):6'd0); h2<=envelope(h2,have_audio?hgt_of(s2):6'd0);
+   h3<=envelope(h3,have_audio?hgt_of(s3):6'd0); h4<=envelope(h4,have_audio?hgt_of(s4):6'd0);
+   h5<=envelope(h5,have_audio?hgt_of(s5):6'd0); h6<=envelope(h6,have_audio?hgt_of(s6):6'd0);
+   h7<=envelope(h7,have_audio?hgt_of(s7):6'd0); h8<=envelope(h8,have_audio?hgt_of(s8):6'd0);
   end
  end
  // 每根柱：第 j=bx[5:3] 段到第 j+1 段之间按 bx[2:0] 线性插值
@@ -95,8 +123,6 @@ module guide_wave(
  wire signed [6:0] diff=$signed({1'b0,hj1})- $signed({1'b0,hj});
  wire signed [9:0] adj=($signed({3'd0,t})*diff)>>>3;
  wire [5:0] hcur=hj+adj[5:0];
- // 上电前 0.5 s 不显示（滤波器还没稳）
- reg [15:0] warm;
- always @(posedge pclk or posedge prst) if(prst) warm<=0;else if(sample_valid&&warm!=16'hffff) warm<=warm+1'b1;
- always @(posedge pclk) hgt<=(warm>=16'd24000)?hcur:6'd0;
+ always @(posedge pclk or posedge prst)
+  if(prst) hgt<=0;else hgt<=restart?6'd0:hcur;
 endmodule

@@ -1,14 +1,15 @@
 // Boot: PIC00 (route card) then PIC01..PIC06 (5 spots + emergency), all 640x480.
 // Runtime: cancel/drain/open PCM.
-module guide_media(input clk,input rst,input play_toggle,input [3:0] page,input no_audio,
+module guide_media #(parameter PREFER_BMP=0,parameter ROUTE_CARD=0)(input clk,input rst,input play_toggle,input [3:0] page,input no_audio,
  input stream_busy,input stream_done,input [7:0] stream_error,input [31:0] file_size,
  output reg stream_start,output reg stream_cancel,output reg [87:0] filename,
  input bmp_done,input [7:0] bmp_error,input memory_idle,output reg bmp_start,
  output [10:0] bmp_width,output [9:0] bmp_height,output [20:0] bmp_base,
  output [9:0] bmp_left,output [9:0] bmp_top,output reg loaded,output reg [3:0] load_index,output reg boot_done,
  output reg [7:0] error,output reg audio_flush,output audio_mode,
- output reg audio_eof,output reg audio_error,output reg mem_restart);
- localparam BOOT=0,OPEN=1,IMAGE=2,DRAIN=3,WAITPLAY=4,CANCEL=5,AOPEN=6,ASTREAM=7,FAILED=8,IWAIT=9,AWAIT=10,RETRY=11;
+ output reg audio_eof,output reg audio_error,output reg mem_restart,
+ output reg bmp_raw,output reg [23:0] total_samples);
+ localparam BOOT=0,OPEN=1,IMAGE=2,DRAIN=3,WAITPLAY=4,CANCEL=5,AOPEN=6,ASTREAM=7,FAILED=8,IWAIT=9,AWAIT=10,RETRY=11,FALLBACK=12;
  reg [3:0] state;reg [1:0] play_sync;reg seen;reg [3:0] selected;reg [5:0] settle;reg [2:0] tries;reg [19:0] rdelay;
  reg in_boot;                       // 先加载 PIC11（美化过的开机卡）到第 12 页（11*153600）
  wire [7:0] digit=8'd48+{4'd0,load_index};
@@ -21,16 +22,21 @@ module guide_media(input clk,input rst,input play_toggle,input [3:0] page,input 
  always @(posedge clk or posedge rst) begin
   if(rst) begin state<=BOOT;stream_start<=0;stream_cancel<=0;filename<=0;bmp_start<=0;
    loaded<=0;load_index<=0;boot_done<=0;in_boot<=1;error<=0;audio_flush<=1;audio_eof<=0;audio_error<=0;
-   play_sync<=0;seen<=0;selected<=0;settle<=0;tries<=0;mem_restart<=0;rdelay<=0;end
+   play_sync<=0;seen<=0;selected<=0;settle<=0;tries<=0;mem_restart<=0;rdelay<=0;
+   bmp_raw<=!PREFER_BMP;total_samples<=0;end
   else begin
    stream_start<=0;stream_cancel<=0;bmp_start<=0;play_sync<={play_sync[0],play_toggle};
    case(state)
     // 10 张导览/广告卡是 PIC00..PIC09，第 11 页是开发者设置卡 PIC10
-    BOOT:begin filename<=in_boot?{"PIC11","   DAT"}:
-                        (load_index==4'd10)?{"PIC10","   DAT"}:{"PIC0",digit,"   DAT"};state<=OPEN;end
+    BOOT:begin filename<={in_boot?40'h5049433131:
+                        (load_index==4'd12)?40'h5049433132:
+                        (load_index==4'd10)?40'h5049433130:{"PIC0",digit},"   ",bmp_raw?24'h444154:24'h424d50};state<=OPEN;end
     OPEN:begin stream_start<=1;bmp_start<=1;state<=IWAIT;end
     IWAIT:state<=IMAGE;
-    IMAGE:if(stream_error!=0 || bmp_error!=0) begin
+    IMAGE:if(stream_error==8'h26 && !bmp_raw) begin
+     // A missing BMP alone permits DAT fallback; a malformed BMP remains an error.
+     stream_cancel<=1;bmp_raw<=1;state<=FALLBACK;
+    end else if(stream_error!=0 || bmp_error!=0) begin
      // Keep the first code on screen, but a transient read may recover.
      if(error==0) error<=stream_error!=0?stream_error:bmp_error;
      stream_cancel<=1;mem_restart<=1;rdelay<=0;
@@ -42,9 +48,12 @@ module guide_media(input clk,input rst,input play_toggle,input [3:0] page,input 
      if(rdelay==20'hfffff) begin rdelay<=0;mem_restart<=0;state<=BOOT;end
      else rdelay<=rdelay+1'b1;
     end
+    FALLBACK:if(!stream_busy && memory_idle) state<=BOOT;
     DRAIN:if(memory_idle) begin
+     bmp_raw<=!PREFER_BMP;
      if(in_boot) begin boot_done<=1;in_boot<=0;state<=BOOT;end
-     else if(load_index==4'd10) begin loaded<=1;load_index<=4'd11;state<=WAITPLAY;end
+     else if(load_index==4'd10 && ROUTE_CARD) begin load_index<=12;state<=BOOT;end
+     else if(load_index==4'd10 || load_index==4'd12) begin loaded<=1;load_index<=4'd13;state<=WAITPLAY;end
      else begin load_index<=load_index+1'b1;state<=BOOT;end
     end
     WAITPLAY:begin end
@@ -64,7 +73,8 @@ module guide_media(input clk,input rst,input play_toggle,input [3:0] page,input 
     AOPEN:begin stream_start<=1;audio_flush<=0;state<=AWAIT;end
     AWAIT:state<=ASTREAM;
     ASTREAM:begin
-     if(stream_error!=0 || (file_size[0] && file_size!=0)) begin
+     if(file_size!=0 && file_size<=32'h01fffffe) total_samples<=file_size[24:1];
+     if(stream_error!=0 || file_size[0] || file_size>32'h01fffffe) begin
       audio_error<=1;audio_eof<=1;stream_cancel<=1;state<=WAITPLAY;
      end else if(stream_done) begin audio_eof<=1;state<=WAITPLAY;end
     end
@@ -73,7 +83,7 @@ module guide_media(input clk,input rst,input play_toggle,input [3:0] page,input 
    endcase
    if(loaded && play_sync[1]!=seen) begin
     seen<=play_sync[1];selected<=page;stream_cancel<=1;audio_flush<=1;
-    audio_eof<=0;audio_error<=0;settle<=0;state<=CANCEL;
+    audio_eof<=0;audio_error<=0;settle<=0;state<=CANCEL;total_samples<=0;
    end
   end
  end

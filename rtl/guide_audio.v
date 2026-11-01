@@ -3,7 +3,7 @@
 module guide_audio #(parameter CLOCK_HZ=51000000)(input mclk,input mrst,input flush,input [7:0] data,input valid,output ready,
  input eof,input pclk,input prst,input paused,input mute,input [1:0] volume,
  output reg sample_valid,output reg [23:0] sample,output reg ended,
- output reg playing,output reg underrun);
+ output reg playing,output reg underrun,output reg sample_played);
  reg [15:0] fifo[0:4095];reg [12:0] wp,wgray,rp,rgray;
  reg [12:0] rg1,rg2,wg1,wg2;reg half;reg [7:0] lowbyte;
  reg [15:0] q;reg [1:0] eof_sync,flush_sync;reg [25:0] phase;
@@ -52,11 +52,12 @@ module guide_audio #(parameter CLOCK_HZ=51000000)(input mclk,input mrst,input fl
  end
  // Audio packet cadence continues through silence, pause and file switching.
  always @(posedge pclk or posedge prst) begin
-  if(prst) begin phase<=0;sample_valid<=0;sample<=0;end
+  if(prst) begin phase<=0;sample_valid<=0;sample<=0;sample_played<=0;end
   else begin
-   sample_valid<=0;
+   sample_valid<=0;sample_played<=0;
    if(phase>=CLOCK_HZ-48000) begin
     phase<=phase-(CLOCK_HZ-48000);sample_valid<=1;
+    sample_played<=!rrst && playing && !paused && !empty;
     sample<=(!rrst && playing && !paused && !mute && !empty)?{scaled,8'd0}:24'd0;
    end else phase<=phase+48000;
   end

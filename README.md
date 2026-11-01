@@ -73,3 +73,14 @@ SD 卡 ──FAT32──► FAT 流 ──► SDRAM 帧缓存（12 页 × 153,60
 | 9Kb RAM | 59 / 64 |
 | DSP | 13 / 29 |
 | Setup / Hold WNS | +1435 ps / +3 ps，0 违例 |
+
+## 新增模块
+
+| 模块 | 作用 |
+|---|---|
+| `rtl/guide_route.v` | 6 节点演示图（5 处景点 + 1 个演示出口），顺序 Dijkstra 共用一个比较器/加法器，规划导览顺序，不占帧缓存 |
+| `rtl/guide_widgets.v` | 单个字库端口复用给 640 玻璃面板、提示条与路线标签；`NATIVE_PANEL=1` 保留旧 1024 版侧栏布局 |
+| `rtl/guide_label_rom.v` | 路线标签共用的字形 ROM（`scripts/gen_labels.py` 生成），不需要整屏叠加 RAM |
+| `rtl/guide_playback_bar.v` | 播放进度条，复用字幕边距里的几何计算，不额外占帧缓存 |
+| `rtl/guide_timeline_font.v` | 进度条字形，纯组合掩码查表（`scripts/gen_timeline_font.py` 生成），不推断 RAM |
+| `rtl/guide_clock_guard.v` | 生成时钟停摆时强制复位；两个 PLL 要在独立的 50 MHz 参考时钟下连续锁定 20 ms 才释放复位 |
