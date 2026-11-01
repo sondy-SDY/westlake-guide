@@ -14,7 +14,7 @@ module guide_media #(parameter PREFER_BMP=0,parameter ROUTE_CARD=0)(input clk,in
  reg in_boot;                       // 先加载 PIC11（美化过的开机卡）到第 12 页（11*153600）
  wire [7:0] digit=8'd48+{4'd0,load_index};
  // Cards are stored tightly: 320 words per row, no in-page offset. Their
- // screen position (192,76) lives in guide_video, not in the page layout.
+ // screen position is bmp_left/bmp_top below (full screen at 0,0).
  assign bmp_width=11'd640;assign bmp_height=10'd480;
  assign bmp_left=10'd0;assign bmp_top=10'd0;
  assign bmp_base=in_boot?21'd1689600:{7'd0,load_index}*21'd153600;
